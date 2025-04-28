@@ -1,6 +1,7 @@
 // face_detection_controller.dart
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -10,6 +11,8 @@ import 'package:flutter/material.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 
 class FaceDetectionController {
   late CameraController _cameraController;
@@ -21,14 +24,26 @@ class FaceDetectionController {
   int _stableCounter = 0;
   final int _stableThreshold = 90; // about 3 seconds at 30fps
 
-  double envBrightness = 0.0;
-  double faceBrightness = 0.0;
-  double acneLevel = 0.0;
-  String skinTone = 'Unknown';
-
   Face? _lastFace;
   Rect? _lastFaceRect;
   Size? _imageSize;
+
+  // double envBrightness = 0.0;
+  // double faceBrightness = 0.0;
+  // double acneLevel = 0.0;
+  // String skinTone = 'Unknown';
+
+  final ValueNotifier<Rect?> faceRect = ValueNotifier(null);
+  final ValueNotifier<double> envBrightness = ValueNotifier(0);
+  final ValueNotifier<double> faceBrightness = ValueNotifier(0);
+  final ValueNotifier<String> skinTone = ValueNotifier('Unknown');
+  final ValueNotifier<double> acneLevel = ValueNotifier(0);
+
+  Timer? _stableTimer;
+  bool _isFaceStable = false;
+  Function(File)? onImageCaptured;
+
+  CameraController get cameraController => _cameraController;
 
   FaceDetectionController()
     : _faceDetector = FaceDetector(
@@ -58,8 +73,9 @@ class FaceDetectionController {
     );
 
     await _cameraController.initialize();
+    await Future.delayed(const Duration(milliseconds: 100));
     _cameraController.startImageStream(_processCameraImage);
-    await _loadAcneModel();
+    //await _loadAcneModel();
   }
 
   Future<void> _loadAcneModel() async {
@@ -69,8 +85,6 @@ class FaceDetectionController {
       debugPrint('Acne model load failed: $e');
     }
   }
-
-  CameraController get cameraController => _cameraController;
 
   void dispose() {
     _faceDetector.close();
@@ -125,8 +139,8 @@ class FaceDetectionController {
         'image': image,
         'boundingBox': boundingBox,
       }).then((results) {
-        envBrightness = results['env']!;
-        faceBrightness = results['face']!;
+        envBrightness.value = results['env']!;
+        faceBrightness.value = results['face']!;
         _classifySkinTone();
       });
     } else {
@@ -215,17 +229,16 @@ class FaceDetectionController {
   }
 
   void _classifySkinTone() {
-    if (faceBrightness < 50) {
-      skinTone = 'Dark';
-    } else if (faceBrightness < 150) {
-      skinTone = 'Medium';
+    if (faceBrightness.value < 50) {
+      skinTone.value = 'Dark';
+    } else if (faceBrightness.value < 150) {
+      skinTone.value = 'Medium';
     } else {
-      skinTone = 'Light';
+      skinTone.value = 'Light';
     }
   }
 
   Face? get currentFace => _lastFace;
-  Rect? get faceRect => _lastFaceRect;
 }
 
 Future<Map<String, double>> _calculateBrightness(
@@ -261,4 +274,271 @@ Future<Map<String, double>> _calculateBrightness(
     'env': totalEnvBrightness / totalEnvPixels,
     'face': totalFaceBrightness / totalFacePixels,
   };
+}
+
+// face_detection_controller.dart
+
+// import 'dart:async';
+// import 'dart:io';
+// import 'dart:isolate';
+// import 'dart:math';
+// import 'dart:typed_data';
+
+// import 'package:camera/camera.dart';
+// import 'package:flutter/material.dart';
+// import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+// import 'package:image/image.dart' as img;
+
+class FaceDetectionControllerTemp {
+  final CameraLensDirection cameraLensDirection;
+  late CameraController _cameraController;
+  late FaceDetector _faceDetector;
+  bool _isDetecting = false;
+
+  final ValueNotifier<Rect?> faceRect = ValueNotifier(null);
+  final ValueNotifier<double> envBrightness = ValueNotifier(0);
+  final ValueNotifier<double> faceBrightness = ValueNotifier(0);
+  final ValueNotifier<String> skinTone = ValueNotifier('Unknown');
+  final ValueNotifier<double> acneLevel = ValueNotifier(0);
+
+  Timer? _stableTimer;
+  bool _isFaceStable = false;
+  bool _hasCaptured = false;
+  Function(File)? onImageCaptured;
+
+  FaceDetectionControllerTemp({
+    this.cameraLensDirection = CameraLensDirection.front,
+  });
+
+  CameraController get cameraController => _cameraController;
+
+  Future<void> initialize() async {
+    final cameras = await availableCameras();
+    final camera = cameras.firstWhere(
+      (c) => c.lensDirection == cameraLensDirection,
+    );
+
+    _cameraController = CameraController(
+      camera,
+      ResolutionPreset.high,
+      imageFormatGroup:
+          Platform.isAndroid
+              ? ImageFormatGroup.yuv420
+              : ImageFormatGroup.bgra8888,
+    );
+
+    _faceDetector = FaceDetector(
+      options: FaceDetectorOptions(
+        enableContours: true,
+        enableClassification: true,
+      ),
+    );
+
+    await _cameraController.initialize();
+    _cameraController.startImageStream(_processCameraImage);
+  }
+
+  void _processCameraImage(CameraImage image) async {
+    if (_isDetecting) return;
+    _isDetecting = true;
+
+    try {
+      final inputImage = _getInputImageFromCameraImage(image);
+      final faces = await _faceDetector.processImage(inputImage);
+
+      if (faces.isNotEmpty) {
+        final face = faces.first;
+
+        faceRect.value = face.boundingBox;
+
+        _checkFaceStability(face.boundingBox);
+
+        await _calculateEnvBrightness(image);
+
+        final croppedFace = await _cropFaceFromCameraImage(
+          image,
+          face.boundingBox,
+        );
+
+        await _calculateFaceBrightnessAndAcne(croppedFace);
+      } else {
+        faceRect.value = null;
+        _stableTimer?.cancel();
+        _isFaceStable = false;
+        _hasCaptured = false;
+      }
+    } catch (e) {
+      debugPrint('Face detection error: $e');
+    }
+
+    _isDetecting = false;
+  }
+
+  InputImage _getInputImageFromCameraImage(CameraImage image) {
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final Plane plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    final bytes = allBytes.done().buffer.asUint8List();
+
+    return InputImage.fromBytes(
+      bytes: bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: _cameraRotation(),
+        format:
+            Platform.isAndroid
+                ? InputImageFormat.nv21
+                : InputImageFormat.bgra8888,
+        bytesPerRow: image.planes[0].bytesPerRow,
+      ),
+    );
+  }
+
+  InputImageRotation _cameraRotation() {
+    switch (_cameraController.description.sensorOrientation) {
+      case 90:
+        return InputImageRotation.rotation90deg;
+      case 270:
+        return InputImageRotation.rotation270deg;
+      case 180:
+        return InputImageRotation.rotation180deg;
+      default:
+        return InputImageRotation.rotation0deg;
+    }
+  }
+
+  void _checkFaceStability(Rect rect) {
+    final center = Offset(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    final screenCenter = Offset(
+      _cameraController.value.previewSize!.height / 2,
+      _cameraController.value.previewSize!.width / 2,
+    );
+
+    final distance = (center - screenCenter).distance;
+
+    if (distance < 50) {
+      if (!_isFaceStable) {
+        _stableTimer = Timer(Duration(seconds: 2), _captureFace);
+        _isFaceStable = true;
+      }
+    } else {
+      _stableTimer?.cancel();
+      _isFaceStable = false;
+      _hasCaptured = false;
+    }
+  }
+
+  Future<void> _captureFace() async {
+    if (!_cameraController.value.isInitialized ||
+        !_cameraController.value.isStreamingImages)
+      return;
+    if (_hasCaptured) return;
+
+    final file = await _cameraController.takePicture();
+
+    _hasCaptured = true;
+
+    if (onImageCaptured != null) {
+      onImageCaptured!(File(file.path));
+    }
+  }
+
+  Future<void> _calculateEnvBrightness(CameraImage image) async {
+    final int totalY = image.planes[0].bytes.fold(0, (a, b) => a + b);
+    final double avgY = totalY / image.planes[0].bytes.length;
+
+    envBrightness.value = avgY;
+  }
+
+  Future<img.Image> _cropFaceFromCameraImage(
+    CameraImage image,
+    Rect boundingBox,
+  ) async {
+    final bytes = image.planes[0].bytes;
+
+    img.Image fullImage = img.Image.fromBytes(
+      width: image.width,
+      height: image.height,
+      bytes: bytes.buffer,
+      format: img.Format.uint8,
+    );
+
+    int x = boundingBox.left.toInt().clamp(0, fullImage.width - 1);
+    int y = boundingBox.top.toInt().clamp(0, fullImage.height - 1);
+    int w = boundingBox.width.toInt().clamp(1, fullImage.width - x);
+    int h = boundingBox.height.toInt().clamp(1, fullImage.height - y);
+
+    img.Image cropped = img.copyCrop(
+      fullImage,
+      x: x,
+      y: y,
+      width: w,
+      height: h,
+    );
+    return cropped;
+  }
+
+  Future<void> _calculateFaceBrightnessAndAcne(img.Image cropped) async {
+    final ReceivePort receivePort = ReceivePort();
+
+    await Isolate.spawn<_BrightnessParams>(
+      _brightnessIsolate,
+      _BrightnessParams(cropped, receivePort.sendPort),
+    );
+
+    final results = await receivePort.first as Map<String, double>;
+
+    faceBrightness.value = results['brightness'] ?? 0;
+
+    skinTone.value = _classifySkinTone(faceBrightness.value);
+
+    acneLevel.value = results['acne'] ?? 0;
+  }
+
+  static void _brightnessIsolate(_BrightnessParams params) {
+    double totalBrightness = 0;
+    int count = 0;
+
+    for (int y = 0; y < params.image.height; y++) {
+      for (int x = 0; x < params.image.width; x++) {
+        final pixel = params.image.getPixel(x, y);
+        final luminance = pixel.r; // Since image is luminance only
+
+        totalBrightness += luminance;
+        count++;
+      }
+    }
+
+    final avgBrightness = totalBrightness / count;
+
+    params.sendPort.send({
+      'brightness': avgBrightness,
+      'acne': 0, // acne detection disabled for now
+    });
+  }
+
+  String _classifySkinTone(double brightness) {
+    if (brightness > 220) return 'Very Light';
+    if (brightness > 170) return 'Light';
+    if (brightness > 120) return 'Medium';
+    if (brightness > 70) return 'Dark';
+    return 'Very Dark';
+  }
+
+  void dispose() {
+    _cameraController.dispose();
+    _faceDetector.close();
+    _stableTimer?.cancel();
+  }
+}
+
+class _BrightnessParams {
+  final img.Image image;
+  final SendPort sendPort;
+
+  _BrightnessParams(this.image, this.sendPort);
 }

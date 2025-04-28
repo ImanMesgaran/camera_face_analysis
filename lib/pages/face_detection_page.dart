@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:camera_face_analysis/FaceCapturePage.dart';
 import 'package:camera_face_analysis/face_detection_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
@@ -12,60 +11,107 @@ class FaceDetectionPage extends StatefulWidget {
 
 class _FaceDetectionPageState extends State<FaceDetectionPage> {
   late FaceDetectionController _controller;
+  bool _isInitialized = false;
 
   @override
   void initState() {
     super.initState();
     _controller =
         FaceDetectionController()
-          ..onFaceCaptured = (Uint8List croppedFace) {
-            // Handle the face capture logic here (e.g., showing the image or processing it)
-            setState(() {
-              // Optionally update the UI based on the captured face (croppedFace)
-            });
+          ..onImageCaptured = (file) {
+            // Handle captured image
           };
 
-    // Initialize the face detection controller
-    _controller.initialize().then((_) {
-      if (mounted) {
-        setState(() {});
-      }
-    });
+    _initializeController();
+  }
+
+  Future<void> _initializeController() async {
+    await _controller.initialize();
+    if (mounted) {
+      setState(() {
+        _isInitialized = true;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _controller.dispose();
     super.dispose();
-    _controller.dispose(); // Don't forget to dispose of the controller
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Face Detection')),
+      appBar: AppBar(title: const Text('Face Detection')),
       body:
-          _controller.cameraController.value.isInitialized
+          _isInitialized
               ? Column(
                 children: [
-                  // Display the live camera feed
-                  Expanded(child: CameraPreview(_controller.cameraController)),
-                  // Display detected face details
+                  Expanded(
+                    child: Stack(
+                      children: [
+                        CameraPreview(_controller.cameraController),
+                        ValueListenableBuilder<Rect?>(
+                          valueListenable: _controller.faceRect,
+                          builder: (context, rect, child) {
+                            if (rect == null) return SizedBox.shrink();
+                            return Positioned(
+                              left: rect.left,
+                              top: rect.top,
+                              width: rect.width,
+                              height: rect.height,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: Colors.green,
+                                    width: 3,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
                   Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
-                        Text('Skin Tone: ${_controller.skinTone}'),
-                        Text('Face Brightness: ${_controller.faceBrightness}'),
-                        Text(
-                          'Environment Brightness: ${_controller.envBrightness}',
+                        ValueListenableBuilder<String>(
+                          valueListenable: _controller.skinTone,
+                          builder:
+                              (context, value, child) =>
+                                  Text('Skin Tone: $value'),
                         ),
-                        Text('Acne Level: ${_controller.acneLevel}'),
+                        ValueListenableBuilder<double>(
+                          valueListenable: _controller.faceBrightness,
+                          builder:
+                              (context, value, child) => Text(
+                                'Face Brightness: ${value.toStringAsFixed(2)}',
+                              ),
+                        ),
+                        ValueListenableBuilder<double>(
+                          valueListenable: _controller.envBrightness,
+                          builder:
+                              (context, value, child) => Text(
+                                'Environment Brightness: ${value.toStringAsFixed(2)}',
+                              ),
+                        ),
+                        ValueListenableBuilder<double>(
+                          valueListenable: _controller.acneLevel,
+                          builder:
+                              (context, value, child) => Text(
+                                'Acne Level: ${value.toStringAsFixed(2)}%',
+                              ),
+                        ),
                       ],
                     ),
                   ),
                 ],
               )
-              : Center(child: CircularProgressIndicator()),
+              : const Center(child: CircularProgressIndicator()),
     );
   }
 }
