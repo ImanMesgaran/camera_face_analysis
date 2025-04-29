@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:camera_face_analysis/face_detection_controller.dart';
+import 'package:camera_face_analysis/face_detection_controller2.dart';
 import 'package:camera_face_analysis/logic/detector_view.dart';
 import 'package:camera_face_analysis/logic/face_detector_painter.dart';
 import 'package:flutter/material.dart';
@@ -77,35 +78,31 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                       ),
                     ),
 
-                    /*
-                    Expanded(
-                      child: Stack(
-                        children: [
-                          CameraPreview(_controller.cameraController),
-                          ValueListenableBuilder<Rect?>(
-                            valueListenable: _controller.faceRect,
-                            builder: (context, rect, child) {
-                              if (rect == null) return SizedBox.shrink();
-                              return Positioned(
-                                left: rect.left,
-                                top: rect.top,
-                                width: rect.width,
-                                height: rect.height,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: Colors.green,
-                                      width: 3,
-                                    ),
+                    /*Stack(
+                      children: [
+                        CameraPreview(_controller.cameraController),
+                        ValueListenableBuilder<Rect?>(
+                          valueListenable: _controller.faceRect,
+                          builder: (context, rect, child) {
+                            if (rect == null) return SizedBox.shrink();
+                            return Positioned(
+                              left: rect.left,
+                              top: rect.top,
+                              width: rect.width,
+                              height: rect.height,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: Colors.green,
+                                    width: 3,
                                   ),
                                 ),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                    */
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),*/
                     Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
