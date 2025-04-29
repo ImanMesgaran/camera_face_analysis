@@ -14,7 +14,7 @@ import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:google_mlkit_commons/google_mlkit_commons.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 
-class FaceDetectionController {
+class FaceDetectionControllerTemp {
   late CameraController _cameraController;
   final FaceDetector _faceDetector;
   Interpreter? _acneInterpreter;
@@ -45,7 +45,7 @@ class FaceDetectionController {
 
   CameraController get cameraController => _cameraController;
 
-  FaceDetectionController()
+  FaceDetectionControllerTemp()
     : _faceDetector = FaceDetector(
         options: FaceDetectorOptions(
           performanceMode: FaceDetectorMode.fast,
@@ -289,7 +289,7 @@ Future<Map<String, double>> _calculateBrightness(
 // import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 // import 'package:image/image.dart' as img;
 
-class FaceDetectionControllerTemp {
+class FaceDetectionController {
   final CameraLensDirection cameraLensDirection;
   late CameraController _cameraController;
   late FaceDetector _faceDetector;
@@ -306,7 +306,7 @@ class FaceDetectionControllerTemp {
   bool _hasCaptured = false;
   Function(File)? onImageCaptured;
 
-  FaceDetectionControllerTemp({
+  FaceDetectionController({
     this.cameraLensDirection = CameraLensDirection.front,
   });
 
@@ -331,6 +331,7 @@ class FaceDetectionControllerTemp {
       options: FaceDetectorOptions(
         enableContours: true,
         enableClassification: true,
+        enableLandmarks: true,
       ),
     );
 
@@ -339,7 +340,8 @@ class FaceDetectionControllerTemp {
   }
 
   void _processCameraImage(CameraImage image) async {
-    if (_isDetecting) return;
+    if (_isDetecting || !_cameraController.value.isInitialized) return;
+
     _isDetecting = true;
 
     try {
@@ -367,11 +369,12 @@ class FaceDetectionControllerTemp {
         _isFaceStable = false;
         _hasCaptured = false;
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('Face detection error: $e');
+      debugPrintStack(stackTrace: stackTrace);
+    } finally {
+      _isDetecting = false;
     }
-
-    _isDetecting = false;
   }
 
   InputImage _getInputImageFromCameraImage(CameraImage image) {
