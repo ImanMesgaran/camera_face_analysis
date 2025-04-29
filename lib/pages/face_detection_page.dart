@@ -33,6 +33,7 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
         FaceDetectionController()
           ..onImageCaptured = (file) {
             // Handle captured image
+            print('on captured image');
           };
 
     _initializeController();
@@ -107,6 +108,12 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
                         children: [
+                          /*FutureBuilder(
+                            future: _controller.processCameraImage(image),
+                            builder: (context, snapshot) {
+                              return Container();
+                            },
+                          ),*/
                           ValueListenableBuilder<String>(
                             valueListenable: _controller.skinTone,
                             builder:

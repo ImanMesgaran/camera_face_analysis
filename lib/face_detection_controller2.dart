@@ -13,7 +13,7 @@ class FaceDetectionController {
   late CameraController cameraController;
   late final FaceDetector faceDetector;
   late StreamController<CameraImage> _imageStreamController;
-  late StreamSubscription<CameraImage> _imageStreamSubscription;
+  // late StreamSubscription<CameraImage> _imageStreamSubscription;
   Timer? _faceHoldTimer;
   DateTime? _lastFaceCenteredTime;
 
@@ -27,11 +27,13 @@ class FaceDetectionController {
   Future<void> initialize() async {
     _imageStreamController = StreamController<CameraImage>.broadcast();
 
+    /*
     _imageStreamSubscription = _imageStreamController.stream.listen(
       _processCameraImage,
       onError: (e) => print('Stream error: $e'),
       cancelOnError: false,
     );
+    */
 
     final cameras = await availableCameras();
     final frontCamera = cameras.firstWhere(
@@ -42,7 +44,8 @@ class FaceDetectionController {
       frontCamera,
       ResolutionPreset.medium,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
+      imageFormatGroup:
+          Platform.isIOS ? ImageFormatGroup.bgra8888 : ImageFormatGroup.nv21,
     );
 
     await cameraController.initialize();
@@ -70,25 +73,118 @@ class FaceDetectionController {
     //   }
     // });
 
+    /* 
+    // Method 2
+    bool _isProcessing = false;
+    DateTime _lastFrameTime = DateTime.now();
+    final Duration _minFrameInterval = Duration(milliseconds: 300);
+
+    await cameraController.startImageStream((CameraImage image) async {
+      final now = DateTime.now();
+      if (_isProcessing || now.difference(_lastFrameTime) < _minFrameInterval) {
+        return;
+      }
+
+      _isProcessing = true;
+      _lastFrameTime = now;
+
+      try {
+        //_imageStreamController.add(image);
+        await _processCameraImage(image);
+      } catch (e) {
+        print("Error processing image: $e");
+      } finally {
+        _isProcessing = false;
+      }
+    });
+    */
+
     Duration minFrameInterval = Duration(milliseconds: 300);
     DateTime _lastFrameTime = DateTime.now();
+    //Future.delayed(Duration(seconds: 10), () {
+    _imageStreamController.stream.listen(
+      (image) async {
+        final now = DateTime.now();
+        if (now.difference(_lastFrameTime) > minFrameInterval) {
+          _lastFrameTime = now;
+          await processCameraImage(image);
+        }
+      },
+      onError: (value) {
+        print('this is the on error: $value');
+      },
+      cancelOnError: false,
+    );
+    //});
 
-    await Future.delayed(Duration(seconds: 3), () {
-      _imageStreamController.stream.listen(
-        (image) async {
-          final now = DateTime.now();
-          if (now.difference(_lastFrameTime) > minFrameInterval) {
-            _lastFrameTime = now;
-            await _processCameraImage(image);
-          }
-        },
-        onError: (value) {
-          print('this is the on error: $value');
-        },
-        cancelOnError: false,
-      );
+    /*
+    bool _isProcessing = false;
+    DateTime _lastProcessedTime = DateTime.now();
+    final Duration _minFrameInterval = Duration(
+      milliseconds: 500,
+    ); // adjust as needed
+
+    
+    _imageStreamSubscription = _imageStreamController.stream.listen(
+      (image) async {
+        final now = DateTime.now();
+        if (_isProcessing ||
+            now.difference(_lastProcessedTime) < _minFrameInterval) {
+          return;
+        }
+
+        _isProcessing = true;
+        _lastProcessedTime = now;
+
+        try {
+          await _processCameraImage(image);
+        } catch (e) {
+          print("Error in _processCameraImage: $e");
+        } finally {
+          _isProcessing = false;
+        }
+      },
+      onError: (value) {
+        print('this is the on error: $value');
+      },
+      cancelOnError: false,
+    );
+    */
+  }
+
+  /*
+  Future<void> initialize() async {
+    final cameras = await availableCameras();
+    final frontCamera = cameras.firstWhere(
+      (camera) => camera.lensDirection == CameraLensDirection.front,
+    );
+
+    cameraController = CameraController(
+      frontCamera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+      imageFormatGroup:
+          Platform.isIOS ? ImageFormatGroup.bgra8888 : ImageFormatGroup.nv21,
+    );
+
+    await cameraController.initialize();
+
+    faceDetector = FaceDetector(
+      options: FaceDetectorOptions(enableContours: true, enableLandmarks: true),
+    );
+
+    DateTime _lastFrameTime = DateTime.now();
+    Duration minFrameInterval = Duration(milliseconds: 300);
+
+    await cameraController.startImageStream((image) {
+      final now = DateTime.now();
+      if (now.difference(_lastFrameTime) > minFrameInterval) {
+        _lastFrameTime = now;
+        _processCameraImage(image);
+      }
     });
   }
+  */
 
   void dispose() {
     cameraController.dispose();
@@ -97,7 +193,8 @@ class FaceDetectionController {
     print('_processCameraImage on close');
   }
 
-  Future<void> _processCameraImage(CameraImage image) async {
+  // Method 1
+  Future<void> processCameraImage(CameraImage image) async {
     print('_processCameraImage inside');
 
     try {
@@ -164,6 +261,59 @@ class FaceDetectionController {
       debugPrint('Face detection error: $e');
     }
   }
+
+  // Method 2
+  /*
+  bool _isProcessing = false;
+
+  Future<void> _processCameraImage(CameraImage cameraImage) async {
+    if (_isProcessing) return;
+
+    _isProcessing = true;
+
+    try {
+      final result = await compute(_convertAndDetect, {
+        'cameraImage': cameraImage,
+        'platform': Platform.isIOS ? 'ios' : 'android',
+      });
+
+      final InputImage inputImage = result['inputImage'];
+      final img.Image? converted = result['convertedImage'];
+
+      if (converted != null) {
+        // Do pixel manipulation here
+      }
+
+      final faces = await faceDetector.processImage(inputImage);
+      if (faces.isNotEmpty) {
+        debugPrint('Faces detected: ${faces.length}');
+      }
+    } catch (e) {
+      debugPrint('Error in image processing: $e');
+    } finally {
+      _isProcessing = false;
+    }
+  }
+
+  static Future<Map<String, dynamic>> _convertAndDetect(
+    Map<String, dynamic> data,
+  ) async {
+    final CameraImage cameraImage = data['cameraImage'];
+    final String platform = data['platform'];
+
+    final inputImage = await convertCameraImageToInputImage(
+      cameraImage,
+      platform,
+    );
+    final converted = convertYUV420ToImage(
+      cameraImage,
+    ); // if needed for pixel ops
+
+    return {'inputImage': inputImage, 'convertedImage': converted};
+  }
+  */
+
+  // End of Method 2
 
   bool _isFaceCentered(Rect rect, int width, int height) {
     final centerX = width / 2;
@@ -279,13 +429,13 @@ class FaceDetectionController {
         size: Size(image.width.toDouble(), image.height.toDouble()),
         rotation: InputImageRotation.rotation0deg,
         // format: InputImageFormat.yuv420,
-        format:
-            Platform.isAndroid
-                ? InputImageFormat.nv21
-                : InputImageFormatValue.fromRawValue(image.format.raw)!,
         // format:
-        //     Platform.isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21,
-        //format: InputImageFormatValue.fromRawValue(image.format.raw)!,
+        //     Platform.isAndroid
+        //         ? InputImageFormat.nv21
+        //         : InputImageFormatValue.fromRawValue(image.format.raw)!,
+        format:
+            Platform.isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21,
+        // format: InputImageFormatValue.fromRawValue(image.format.raw)!,
         bytesPerRow: image.planes[0].bytesPerRow,
       ),
     );
