@@ -7,6 +7,7 @@ import 'package:camera/camera.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
+import 'package:google_mlkit_commons/google_mlkit_commons.dart';
 
 class FaceDetectionController {
   late CameraController cameraController;
@@ -102,7 +103,10 @@ class FaceDetectionController {
     try {
       final start = DateTime.now();
 
-      final inputImage = await _convertCameraImageToInputImage(image);
+      final inputImage = await _convertCameraImageToInputImage(
+        image,
+        cameraController.description,
+      );
       final faces = await faceDetector.processImage(inputImage);
 
       if (faces.isNotEmpty) {
@@ -210,7 +214,17 @@ class FaceDetectionController {
         final up = image.planes[1].bytes[uvIndex];
         final vp = image.planes[2].bytes[uvIndex];
 
-        final color = _yuvToRgb(yp, up, vp);
+        // final color = _yuvToRgb(yp, up, vp);
+        final color = convertToColor(
+          y: yp,
+          u: up,
+          v: vp,
+          format:
+              Platform.isAndroid
+                  ? InputImageFormat.nv21
+                  : InputImageFormat.bgra8888,
+        );
+
         imgImage.setPixelRgba(x, y, color.red, color.green, color.blue, 255);
       }
     }
@@ -218,26 +232,89 @@ class FaceDetectionController {
     return imgImage;
   }
 
-  Future<InputImage> _convertCameraImageToInputImage(CameraImage image) async {
+  Future<InputImage> _convertCameraImageToInputImage(
+    CameraImage image,
+    CameraDescription camera,
+  ) async {
     final WriteBuffer allBytes = WriteBuffer();
     for (final plane in image.planes) {
       allBytes.putUint8List(plane.bytes);
     }
     final bytes = allBytes.done().buffer.asUint8List();
 
+    final Size imageSize = Size(
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+
+    final imageRotation =
+        InputImageRotationValue.fromRawValue(camera.sensorOrientation) ??
+        InputImageRotation.rotation0deg;
+
+    final inputImageFormat =
+        InputImageFormatValue.fromRawValue(image.format.raw) ??
+        InputImageFormat.nv21;
+
+    // final planeData =
+    //     image.planes
+    //         .map(
+    //           (Plane plane) => InputImagePlaneMetadata(
+    //             bytesPerRow: plane.bytesPerRow,
+    //             height: plane.height,
+    //             width: plane.width,
+    //           ),
+    //         )
+    //         .toList();
+
+    final metadata = InputImageMetadata(
+      size: imageSize,
+      rotation: imageRotation,
+      format: inputImageFormat,
+      bytesPerRow: image.planes[0].bytesPerRow,
+    );
+
     return InputImage.fromBytes(
       bytes: bytes,
       metadata: InputImageMetadata(
         size: Size(image.width.toDouble(), image.height.toDouble()),
         rotation: InputImageRotation.rotation0deg,
-        format: InputImageFormat.nv21,
+        // format: InputImageFormat.yuv420,
+        format:
+            Platform.isAndroid
+                ? InputImageFormat.nv21
+                : InputImageFormatValue.fromRawValue(image.format.raw)!,
         // format:
         //     Platform.isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21,
+        //format: InputImageFormatValue.fromRawValue(image.format.raw)!,
         bytesPerRow: image.planes[0].bytesPerRow,
       ),
     );
   }
 
+  Color convertToColor({
+    required int y,
+    required int u,
+    required int v,
+    required InputImageFormat format,
+  }) {
+    switch (format) {
+      case InputImageFormat.nv21: // Android (YUV420)
+        final r = (y + 1.4075 * (v - 128)).clamp(0, 255).toInt();
+        final g =
+            (y - 0.3455 * (u - 128) - 0.7169 * (v - 128)).clamp(0, 255).toInt();
+        final b = (y + 1.7790 * (u - 128)).clamp(0, 255).toInt();
+        return Color.fromARGB(255, r, g, b);
+
+      case InputImageFormat.bgra8888: // iOS (already RGB in plane 0)
+        // In this case, y, u, v are actually B, G, R
+        return Color.fromARGB(255, v, u, y); // assuming y=blue, u=green, v=red
+
+      default:
+        throw UnsupportedError('Unsupported image format: $format');
+    }
+  }
+
+  /*
   Color _yuvToRgb(int y, int u, int v) {
     final r = (y + 1.4075 * (v - 128)).clamp(0, 255).toInt();
     final g =
@@ -245,6 +322,7 @@ class FaceDetectionController {
     final b = (y + 1.7790 * (u - 128)).clamp(0, 255).toInt();
     return Color.fromARGB(255, r, g, b);
   }
+  */
 
   static double _calculateBrightness(img.Image image) {
     double total = 0;
