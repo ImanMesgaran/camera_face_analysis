@@ -10,6 +10,16 @@ import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_commons/google_mlkit_commons.dart';
 
 class FaceDetectionController {
+  // 1. Static private instance
+  static final FaceDetectionController _instance =
+      FaceDetectionController._internal();
+
+  // 2. Private named constructor
+  FaceDetectionController._internal();
+
+  // 3. Factory constructor returns the singleton instance
+  factory FaceDetectionController() => _instance;
+
   late CameraController cameraController;
   late final FaceDetector faceDetector;
   late StreamController<CameraImage> _imageStreamController;
@@ -25,7 +35,7 @@ class FaceDetectionController {
   Function(XFile)? onImageCaptured;
 
   Future<void> initialize() async {
-    _imageStreamController = StreamController<CameraImage>.broadcast();
+    //_imageStreamController = StreamController<CameraImage>.broadcast();
 
     /*
     _imageStreamSubscription = _imageStreamController.stream.listen(
@@ -99,15 +109,18 @@ class FaceDetectionController {
     });
     */
 
+    bool _isProcessing = false;
     Duration minFrameInterval = Duration(milliseconds: 300);
     DateTime _lastFrameTime = DateTime.now();
     //Future.delayed(Duration(seconds: 10), () {
     _imageStreamController.stream.listen(
       (image) async {
         final now = DateTime.now();
-        if (now.difference(_lastFrameTime) > minFrameInterval) {
+        if (_isProcessing ||
+            now.difference(_lastFrameTime) > minFrameInterval) {
           _lastFrameTime = now;
           await processCameraImage(image);
+          _isProcessing = false;
         }
       },
       onError: (value) {
@@ -416,12 +429,13 @@ class FaceDetectionController {
     //         )
     //         .toList();
 
+    /*
     final metadata = InputImageMetadata(
       size: imageSize,
       rotation: imageRotation,
       format: inputImageFormat,
       bytesPerRow: image.planes[0].bytesPerRow,
-    );
+    );*/
 
     return InputImage.fromBytes(
       bytes: bytes,
