@@ -4,6 +4,7 @@ import 'package:camera_face_analysis/face_detection_controller.dart';
 import 'package:camera_face_analysis/face_detection_controller2.dart';
 import 'package:camera_face_analysis/logic/detector_view.dart';
 import 'package:camera_face_analysis/logic/face_detector_painter.dart';
+import 'package:camera_face_analysis/pages/custom_face_detection_view.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -23,24 +24,35 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
   String? _text;
   var _cameraLensDirection = CameraLensDirection.front;
 
-  late FaceDetectionController _controller;
+  late FaceDetectionController _faceDetectionController;
   bool _isInitialized = false;
+  late Future<void> _initializationFuture;
 
   @override
   void initState() {
     super.initState();
-    _controller =
+    _faceDetectionController =
         FaceDetectionController()
           ..onImageCaptured = (file) {
             // Handle captured image
             print('on captured image');
           };
 
-    _initializeController();
+    //_initializeController();
+    _initializationFuture = _initialize();
+  }
+
+  Future<void> _initialize() async {
+    // Simulate async setup like camera or MLKit
+    await Future.delayed(const Duration(milliseconds: 300));
+    // Or real setup like:
+    // await availableCameras();
+    // _faceDetector = FaceDetector(...);
+    await _initializeController();
   }
 
   Future<void> _initializeController() async {
-    await _controller.initialize();
+    await _faceDetectionController.initialize();
     if (mounted) {
       setState(() {
         _isInitialized = true;
@@ -50,7 +62,7 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
 
   @override
   void dispose() {
-    _controller.dispose();
+    _faceDetectionController.dispose();
     _canProcess = false;
     _faceDetector.close();
     super.dispose();
@@ -65,7 +77,7 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
               ? SingleChildScrollView(
                 child: Column(
                   children: [
-                    SizedBox(
+                    /*SizedBox(
                       height: 300,
                       width: MediaQuery.of(context).size.width,
                       child: DetectorView(
@@ -77,8 +89,31 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                         onCameraLensDirectionChanged:
                             (value) => _cameraLensDirection = value,
                       ),
+                    ),*/
+                    /*
+                    FutureBuilder<void>(
+                      future: _initializationFuture,
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return const Center(
+                            child: CircularProgressIndicator(),
+                          );
+                        } else if (snapshot.hasError) {
+                          return Center(
+                            child: Text('Error: ${snapshot.error}'),
+                          );
+                        } else if (snapshot.hasData) {
+                          return CustomFaceDetectionView(
+                            onImageAvailable: _processCameraImage,
+                            initialDirection: CameraLensDirection.front,
+                          );
+                        } else {
+                          return Center(child: CircularProgressIndicator());
+                        }
+                      },
                     ),
-
+                    */
                     /*Stack(
                       children: [
                         CameraPreview(_controller.cameraController),
@@ -104,6 +139,16 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                         ),
                       ],
                     ),*/
+                    CustomFaceDetectionView(
+                      cameraController:
+                          _faceDetectionController.cameraController,
+                      onImageAvailable: (image) async {
+                        // _faceDetectionController.initialize();
+                        _faceDetectionController.processCameraImage(image);
+                        _processCameraImage(image);
+                      },
+                    ),
+
                     Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Column(
@@ -115,27 +160,29 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                             },
                           ),*/
                           ValueListenableBuilder<String>(
-                            valueListenable: _controller.skinTone,
+                            valueListenable: _faceDetectionController.skinTone,
                             builder:
                                 (context, value, child) =>
                                     Text('Skin Tone: $value'),
                           ),
                           ValueListenableBuilder<double>(
-                            valueListenable: _controller.faceBrightness,
+                            valueListenable:
+                                _faceDetectionController.faceBrightness,
                             builder:
                                 (context, value, child) => Text(
                                   'Face Brightness: ${value.toStringAsFixed(2)}',
                                 ),
                           ),
                           ValueListenableBuilder<double>(
-                            valueListenable: _controller.envBrightness,
+                            valueListenable:
+                                _faceDetectionController.envBrightness,
                             builder:
                                 (context, value, child) => Text(
                                   'Environment Brightness: ${value.toStringAsFixed(2)}',
                                 ),
                           ),
                           ValueListenableBuilder<double>(
-                            valueListenable: _controller.acneLevel,
+                            valueListenable: _faceDetectionController.acneLevel,
                             builder:
                                 (context, value, child) => Text(
                                   'Acne Level: ${value.toStringAsFixed(2)}%',
@@ -151,13 +198,19 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
     );
   }
 
-  Future<void> _processImage(InputImage inputImage) async {
+  Future<void> _processCameraImage(CameraImage cameraImage) async {
     if (!_canProcess) return;
     if (_isBusy) return;
     _isBusy = true;
     setState(() {
       _text = '';
     });
+    final inputImage = await _faceDetectionController
+        .convertCameraImageToInputImage(
+          cameraImage,
+          _faceDetectionController.cameraController.description,
+        );
+
     final faces = await _faceDetector.processImage(inputImage);
     if (inputImage.metadata?.size != null &&
         inputImage.metadata?.rotation != null) {

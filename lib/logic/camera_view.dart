@@ -252,10 +252,11 @@ class _CameraViewState extends State<CameraView> {
       // Set to ResolutionPreset.high. Do NOT set it to ResolutionPreset.max because for some phones does NOT work.
       ResolutionPreset.high,
       enableAudio: false,
-      imageFormatGroup:
-          Platform.isAndroid
-              ? ImageFormatGroup.nv21
-              : ImageFormatGroup.bgra8888,
+      imageFormatGroup: ImageFormatGroup.yuv420,
+      // imageFormatGroup:
+      //     Platform.isAndroid
+      //         ? ImageFormatGroup.nv21
+      //         : ImageFormatGroup.bgra8888,
     );
     _controller?.initialize().then((_) {
       if (!mounted) {

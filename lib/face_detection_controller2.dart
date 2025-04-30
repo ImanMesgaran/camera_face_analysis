@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:camera_face_analysis/logic/extension_methods.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:google_mlkit_commons/google_mlkit_commons.dart';
+import 'package:path_provider/path_provider.dart';
 
 class FaceDetectionController {
   // 1. Static private instance
@@ -33,6 +36,11 @@ class FaceDetectionController {
   final ValueNotifier<double> acneLevel = ValueNotifier(0);
   final ValueNotifier<Rect?> faceRect = ValueNotifier(null);
   Function(XFile)? onImageCaptured;
+  void Function(CameraImage image)? onImageAvailable;
+
+  void setImageAvailableCallback(void Function(CameraImage image) callback) {
+    onImageAvailable = callback;
+  }
 
   Future<void> initialize() async {
     //_imageStreamController = StreamController<CameraImage>.broadcast();
@@ -55,7 +63,7 @@ class FaceDetectionController {
       ResolutionPreset.medium,
       enableAudio: false,
       imageFormatGroup:
-          Platform.isIOS ? ImageFormatGroup.bgra8888 : ImageFormatGroup.nv21,
+          Platform.isIOS ? ImageFormatGroup.bgra8888 : ImageFormatGroup.yuv420,
     );
 
     await cameraController.initialize();
@@ -206,6 +214,24 @@ class FaceDetectionController {
     print('_processCameraImage on close');
   }
 
+  Future<InputImage> loadImageFromAssets(String assetPath) async {
+    final byteData = await rootBundle.load(assetPath);
+
+    final tempDir = await getTemporaryDirectory();
+    final tempFile = File('${tempDir.path}/per_normal_face.jpg');
+
+    await tempFile.writeAsBytes(byteData.buffer.asUint8List());
+
+    return InputImage.fromFilePath(tempFile.path);
+  }
+
+  final orientations = {
+    DeviceOrientation.portraitUp: 0,
+    DeviceOrientation.landscapeLeft: 90,
+    DeviceOrientation.portraitDown: 180,
+    DeviceOrientation.landscapeRight: 270,
+  };
+
   // Method 1
   Future<void> processCameraImage(CameraImage image) async {
     print('_processCameraImage inside');
@@ -213,28 +239,43 @@ class FaceDetectionController {
     try {
       final start = DateTime.now();
 
-      final inputImage = await _convertCameraImageToInputImage(
+      final inputImage = await convertCameraImageToInputImage(
         image,
         cameraController.description,
       );
+
+      // final inputImage1 = await loadImageFromAssets(
+      //   'assets/per_normal_face.jpg',
+      // );
       final faces = await faceDetector.processImage(inputImage);
 
       if (faces.isNotEmpty) {
         final face = faces.first;
         faceRect.value = face.boundingBox;
 
+        final _imageFromCameraImage = await convertCameraImageToImage(image);
+
+        final _convertedImage = await _inputImageFromCameraImage(
+          image,
+          cameraController,
+          orientations,
+        );
+        if (_convertedImage == null) return;
+
         final cropped = await _cropFaceFromCameraImage(image, face.boundingBox);
 
         if (cropped != null) {
           print('_processCameraImage inside');
           final brightness = await compute(_calculateBrightness, cropped);
-          final environmentBrightness = await compute(
-            _calculateBrightness,
-            await _convertCameraImageToImage(image),
-          );
 
-          faceBrightness.value = brightness;
-          envBrightness.value = environmentBrightness;
+          if (_imageFromCameraImage != null) {
+            final environmentBrightness = await compute(
+              _calculateBrightness,
+              _imageFromCameraImage,
+            );
+            faceBrightness.value = brightness;
+            envBrightness.value = environmentBrightness;
+          }
 
           skinTone.value = _classifySkinTone(brightness);
           acneLevel.value = await AcneDetector.process(cropped);
@@ -273,6 +314,69 @@ class FaceDetectionController {
     } catch (e) {
       debugPrint('Face detection error: $e');
     }
+  }
+
+  static InputImage? _inputImageFromCameraImage(
+    CameraImage image,
+    CameraController? controller,
+    Map<DeviceOrientation, int> orientations,
+  ) {
+    // get image rotation
+    // it is used in android to convert the InputImage from Dart to Java
+    // `rotation` is not used in iOS to convert the InputImage from Dart to Obj-C
+    // in both platforms `rotation` and `camera.lensDirection` can be used to compensate `x` and `y` coordinates on a canvas
+    final camera = controller!.description;
+    final sensorOrientation = camera.sensorOrientation;
+    InputImageRotation? rotation;
+    if (Platform.isIOS) {
+      rotation = InputImageRotationValue.fromRawValue(sensorOrientation);
+    } else if (Platform.isAndroid) {
+      var rotationCompensation =
+          orientations[controller.value.deviceOrientation];
+      if (rotationCompensation == null) return null;
+      if (camera.lensDirection == CameraLensDirection.front) {
+        // front-facing
+        rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
+      } else {
+        // back-facing
+        rotationCompensation =
+            (sensorOrientation - rotationCompensation + 360) % 360;
+      }
+      rotation = InputImageRotationValue.fromRawValue(rotationCompensation);
+    }
+    if (rotation == null) return null;
+
+    // get image format
+    final format = InputImageFormatValue.fromRawValue(image.format.raw);
+    // validate format depending on platform
+    // only supported formats:
+    // * bgra8888 for iOS
+    if (format == null ||
+        (Platform.isIOS && format != InputImageFormat.bgra8888))
+      return null;
+    if (image.planes.isEmpty) return null;
+
+    final bytes =
+        Platform.isAndroid
+            ? image.getNv21Uint8List()
+            : Uint8List.fromList(
+              image.planes.fold(
+                <int>[],
+                (List<int> previousValue, element) =>
+                    previousValue..addAll(element.bytes),
+              ),
+            );
+
+    // compose InputImage using bytes
+    return InputImage.fromBytes(
+      bytes: bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: rotation, // used only in Android
+        format: Platform.isIOS ? format : InputImageFormat.nv21,
+        bytesPerRow: image.planes.first.bytesPerRow, // used only in iOS
+      ),
+    );
   }
 
   // Method 2
@@ -340,6 +444,7 @@ class FaceDetectionController {
   ) async {
     try {
       final converted = await _convertCameraImageToImage(image);
+      if (converted == null) return null;
       final left = boundingBox.left.toInt().clamp(0, converted.width - 1);
       final top = boundingBox.top.toInt().clamp(0, converted.height - 1);
       final width = boundingBox.width.toInt().clamp(1, converted.width - left);
@@ -360,6 +465,8 @@ class FaceDetectionController {
     }
   }
 
+  // Method 1
+  /*
   Future<img.Image> _convertCameraImageToImage(CameraImage image) async {
     final width = image.width;
     final height = image.height;
@@ -384,7 +491,7 @@ class FaceDetectionController {
           v: vp,
           format:
               Platform.isAndroid
-                  ? InputImageFormat.nv21
+                  ? InputImageFormat.yuv_420_888
                   : InputImageFormat.bgra8888,
         );
 
@@ -394,8 +501,124 @@ class FaceDetectionController {
 
     return imgImage;
   }
+  */
 
-  Future<InputImage> _convertCameraImageToInputImage(
+  // Method 2
+  Future<img.Image?> _convertCameraImageToImage(CameraImage image) async {
+    if (image.planes.length < 3) {
+      print(
+        "Unsupported format or corrupted image. Plane count: ${image.planes.length}",
+      );
+      return null;
+    }
+
+    final width = image.width;
+    final height = image.height;
+    final uvRowStride = image.planes[1].bytesPerRow;
+    final uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
+
+    final imgImage = img.Image(width: width, height: height);
+
+    for (int y = 0; y < height; y++) {
+      for (int x = 0; x < width; x++) {
+        final uvIndex = uvPixelStride * (x ~/ 2) + uvRowStride * (y ~/ 2);
+        final index = y * width + x;
+
+        final yp = image.planes[0].bytes[index];
+        final up =
+            image.planes[1].bytes.length > uvIndex
+                ? image.planes[1].bytes[uvIndex]
+                : 128;
+        final vp =
+            image.planes[2].bytes.length > uvIndex
+                ? image.planes[2].bytes[uvIndex]
+                : 128;
+
+        final color = convertToColor(
+          y: yp,
+          u: up,
+          v: vp,
+          format: InputImageFormat.yuv_420_888,
+        );
+
+        imgImage.setPixelRgba(x, y, color.red, color.green, color.blue, 255);
+      }
+    }
+
+    return imgImage;
+  }
+
+  Future<img.Image?> convertCameraImageToImage(CameraImage cameraImage) async {
+    final width = cameraImage.width;
+    final height = cameraImage.height;
+
+    if (Platform.isAndroid) {
+      if (cameraImage.planes.length < 3) return null;
+
+      final imgImage = img.Image(width: width, height: height);
+
+      final Uint8List yPlane = cameraImage.planes[0].bytes;
+      final Uint8List uPlane = cameraImage.planes[1].bytes;
+      final Uint8List vPlane = cameraImage.planes[2].bytes;
+
+      final int uvRowStride = cameraImage.planes[1].bytesPerRow;
+      final int uvPixelStride = cameraImage.planes[1].bytesPerPixel!;
+
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          final int yIndex = y * cameraImage.planes[0].bytesPerRow + x;
+          final int uvX = x ~/ 2;
+          final int uvY = y ~/ 2;
+          final int uvIndex = uvY * uvRowStride + uvX * uvPixelStride;
+
+          final int yp = yPlane[yIndex];
+          final int up = uPlane[uvIndex];
+          final int vp = vPlane[uvIndex];
+
+          final r = (yp + 1.403 * (vp - 128)).clamp(0, 255).toInt();
+          final g =
+              (yp - 0.344 * (up - 128) - 0.714 * (vp - 128))
+                  .clamp(0, 255)
+                  .toInt();
+          final b = (yp + 1.770 * (up - 128)).clamp(0, 255).toInt();
+
+          imgImage.setPixelRgba(x, y, r, g, b, 255);
+        }
+      }
+
+      return imgImage;
+    }
+
+    if (Platform.isIOS) {
+      // iOS typically uses BGRA format
+      if (cameraImage.planes.length != 1) return null;
+
+      final plane = cameraImage.planes[0];
+      final bytes = plane.bytes;
+      final rowStride = plane.bytesPerRow;
+      final imgImage = img.Image(width: width, height: height);
+
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          final index = y * rowStride + x * 4;
+          final b = bytes[index];
+          final g = bytes[index + 1];
+          final r = bytes[index + 2];
+          final a = bytes[index + 3];
+
+          imgImage.setPixelRgba(x, y, r, g, b, a);
+        }
+      }
+
+      return imgImage;
+    }
+
+    return null;
+  }
+
+  // Method 1
+  /*
+  Future<InputImage> convertCameraImageToInputImage(
     CameraImage image,
     CameraDescription camera,
   ) async {
@@ -429,8 +652,7 @@ class FaceDetectionController {
     //         )
     //         .toList();
 
-    /*
-    final metadata = InputImageMetadata(
+    /*final metadata = InputImageMetadata(
       size: imageSize,
       rotation: imageRotation,
       format: inputImageFormat,
@@ -450,6 +672,71 @@ class FaceDetectionController {
         format:
             Platform.isIOS ? InputImageFormat.bgra8888 : InputImageFormat.nv21,
         // format: InputImageFormatValue.fromRawValue(image.format.raw)!,
+        bytesPerRow: image.planes[0].bytesPerRow,
+      ),
+    );
+  }
+  */
+
+  // Method 2
+  Future<InputImage> convertCameraImageToInputImage(
+    CameraImage image,
+    CameraDescription camera,
+  ) async {
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    // final bytes = allBytes.done().buffer.asUint8List();
+
+    final Size imageSize = Size(
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+
+    final imageRotation =
+        InputImageRotationValue.fromRawValue(camera.sensorOrientation) ??
+        InputImageRotation.rotation0deg;
+
+    final inputImageFormat =
+        InputImageFormatValue.fromRawValue(image.format.raw) ??
+        InputImageFormat.yuv_420_888;
+
+    /*final metadata = InputImageMetadata(
+      size: imageSize,
+      rotation: imageRotation,
+      format: inputImageFormat,
+      bytesPerRow: image.planes[0].bytesPerRow,
+    );*/
+
+    final bytes =
+        Platform.isAndroid
+            ? image.getNv21Uint8List()
+            : Uint8List.fromList(
+              image.planes.fold(
+                <int>[],
+                (List<int> previousValue, element) =>
+                    previousValue..addAll(element.bytes),
+              ),
+            );
+
+    return InputImage.fromBytes(
+      bytes: bytes,
+      metadata: InputImageMetadata(
+        size: Size(image.width.toDouble(), image.height.toDouble()),
+        rotation: InputImageRotation.rotation0deg,
+        // format: InputImageFormat.yuv_420_888,
+        // format: InputImageFormat.yuv420,
+        // format:
+        //     Platform.isAndroid
+        //         ? InputImageFormat.yuv_420_888
+        //         : InputImageFormat.bgra8888,
+        format:
+            Platform.isIOS
+                ? InputImageFormatValue.fromRawValue(image.format.raw)!
+                : InputImageFormat.nv21,
+        // format: InputImageFormatValue.fromRawValue(image.format.raw)!,
+        // format: InputImageFormat.yuv420,
         bytesPerRow: image.planes[0].bytesPerRow,
       ),
     );

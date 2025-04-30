@@ -5,10 +5,14 @@ import 'dart:typed_data';
 class CustomFaceDetectionView extends StatefulWidget {
   final void Function(CameraImage image) onImageAvailable;
   final CameraLensDirection initialDirection;
+  final CameraController cameraController;
+  // final ValueNotifier<CameraImage> onCameraImage;
 
-  const CustomFaceDetectionView({
+  CustomFaceDetectionView({
+    required this.cameraController,
     required this.onImageAvailable,
     this.initialDirection = CameraLensDirection.front,
+    // required this.onCameraImage,
     super.key,
   });
 
@@ -18,7 +22,6 @@ class CustomFaceDetectionView extends StatefulWidget {
 }
 
 class _CustomFaceDetectionViewState extends State<CustomFaceDetectionView> {
-  CameraController? _controller;
   late List<CameraDescription> _cameras;
   bool _isInitialized = false;
 
@@ -33,16 +36,18 @@ class _CustomFaceDetectionViewState extends State<CustomFaceDetectionView> {
     final cam = _cameras.firstWhere(
       (c) => c.lensDirection == widget.initialDirection,
     );
+    /*
     _controller = CameraController(
       cam,
       ResolutionPreset.medium,
       enableAudio: false,
     );
+    */
 
-    await _controller!.initialize();
-    await _controller!.startImageStream((CameraImage image) {
-      widget.onImageAvailable(image);
-    });
+    // await widget.cameraController.initialize();
+    // await widget.cameraController.startImageStream((CameraImage image) {
+    //   widget.onImageAvailable(image);
+    // });
 
     setState(() {
       _isInitialized = true;
@@ -51,16 +56,16 @@ class _CustomFaceDetectionViewState extends State<CustomFaceDetectionView> {
 
   @override
   void dispose() {
-    _controller?.dispose();
+    // _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized || _controller == null) {
+    if (!_isInitialized) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return CameraPreview(_controller!);
+    return CameraPreview(widget.cameraController);
   }
 }
