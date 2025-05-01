@@ -384,6 +384,32 @@ class FaceDetectionController {
           _estimateAcneLevel(cropped);
 
           if (_isFaceCentered(face.boundingBox, image.width, image.height)) {
+            final isStable = _isFaceStable(face.boundingBox);
+            if (isStable) {
+              _faceHoldTimer ??= Timer(Duration(seconds: 3), () async {
+                if (cameraController.value.isStreamingImages) {
+                  await cameraController.stopImageStream();
+                }
+                final file = await cameraController.takePicture();
+                onImageCaptured?.call(file);
+                _faceHoldTimer?.cancel();
+                _faceHoldTimer = null;
+
+                await cameraController.startImageStream((image) {
+                  imageStreamController.add(image);
+                });
+              });
+            } else {
+              _faceHoldTimer?.cancel();
+              _faceHoldTimer = null;
+            }
+          } else {
+            _faceHoldTimer?.cancel();
+            _faceHoldTimer = null;
+          }
+
+          /*
+          if (_isFaceCentered(face.boundingBox, image.width, image.height)) {
             _faceHoldTimer ??= Timer(Duration(seconds: 3), () async {
               if (cameraController.value.isStreamingImages) {
                 await cameraController.stopImageStream();
@@ -402,6 +428,7 @@ class FaceDetectionController {
             _faceHoldTimer?.cancel();
             _faceHoldTimer = null;
           }
+          */
           final end = DateTime.now();
           print(
             'Frame processed in ${end.difference(start).inMilliseconds} ms',
@@ -419,6 +446,23 @@ class FaceDetectionController {
     } finally {
       _isProcessing = false;
     }
+  }
+
+  Rect? _lastBoundingBox;
+  final double _movementThreshold = 10.0; // pixels
+
+  bool _isFaceStable(Rect currentBox) {
+    if (_lastBoundingBox == null) {
+      _lastBoundingBox = currentBox;
+      return false;
+    }
+
+    final dx = (currentBox.center.dx - _lastBoundingBox!.center.dx).abs();
+    final dy = (currentBox.center.dy - _lastBoundingBox!.center.dy).abs();
+
+    _lastBoundingBox = currentBox;
+
+    return dx < _movementThreshold && dy < _movementThreshold;
   }
 
   static InputImage? _inputImageFromCameraImage(
