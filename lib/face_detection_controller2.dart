@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:camera_face_analysis/logic/extension_methods.dart';
+import 'package:camera_face_analysis/logic/face_detector_painter.dart';
+import 'package:camera_face_analysis/models/detected_face_model.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
@@ -25,7 +27,7 @@ class FaceDetectionController {
 
   late CameraController cameraController;
   late final FaceDetector faceDetector;
-  late StreamController<CameraImage> _imageStreamController;
+  late StreamController<CameraImage> imageStreamController;
   // late StreamSubscription<CameraImage> _imageStreamSubscription;
   Timer? _faceHoldTimer;
   DateTime? _lastFaceCenteredTime;
@@ -37,16 +39,19 @@ class FaceDetectionController {
   final ValueNotifier<Rect?> faceRect = ValueNotifier(null);
   Function(XFile)? onImageCaptured;
   void Function(CameraImage image)? onImageAvailable;
+  final ValueNotifier<CustomPainter?> facePainter = ValueNotifier(null);
+  final ValueNotifier<CustomPaint?> customPaint = ValueNotifier(null);
+  CustomPaint? customPainter;
 
   void setImageAvailableCallback(void Function(CameraImage image) callback) {
     onImageAvailable = callback;
   }
 
   Future<void> initialize() async {
-    //_imageStreamController = StreamController<CameraImage>.broadcast();
+    //imageStreamController = StreamController<CameraImage>.broadcast();
 
     /*
-    _imageStreamSubscription = _imageStreamController.stream.listen(
+    _imageStreamSubscription = imageStreamController.stream.listen(
       _processCameraImage,
       onError: (e) => print('Stream error: $e'),
       cancelOnError: false,
@@ -71,17 +76,17 @@ class FaceDetectionController {
       options: FaceDetectorOptions(enableContours: true, enableLandmarks: true),
     );
 
-    _imageStreamController = StreamController<CameraImage>.broadcast();
+    imageStreamController = StreamController<CameraImage>.broadcast();
     cameraController.startImageStream((image) {
-      _imageStreamController.add(image);
+      imageStreamController.add(image);
     });
 
-    //_imageStreamController.stream.listen(_processCameraImage);
+    //imageStreamController.stream.listen(_processCameraImage);
 
     // bool _isProcessing = false;
     // int _frameCount = 0;
 
-    // _imageStreamController.stream.listen((image) async {
+    // imageStreamController.stream.listen((image) async {
     //   if (_isProcessing) return;
 
     //   if (_frameCount++ % 10 == 0) {
@@ -107,7 +112,7 @@ class FaceDetectionController {
       _lastFrameTime = now;
 
       try {
-        //_imageStreamController.add(image);
+        //imageStreamController.add(image);
         await _processCameraImage(image);
       } catch (e) {
         print("Error processing image: $e");
@@ -121,7 +126,7 @@ class FaceDetectionController {
     Duration minFrameInterval = Duration(milliseconds: 300);
     DateTime _lastFrameTime = DateTime.now();
     //Future.delayed(Duration(seconds: 10), () {
-    _imageStreamController.stream.listen(
+    imageStreamController.stream.listen(
       (image) async {
         final now = DateTime.now();
         if (_isProcessing ||
@@ -146,7 +151,7 @@ class FaceDetectionController {
     ); // adjust as needed
 
     
-    _imageStreamSubscription = _imageStreamController.stream.listen(
+    _imageStreamSubscription = imageStreamController.stream.listen(
       (image) async {
         final now = DateTime.now();
         if (_isProcessing ||
@@ -209,9 +214,30 @@ class FaceDetectionController {
 
   void dispose() {
     cameraController.dispose();
-    _imageStreamController.close();
+    imageStreamController.close();
     faceDetector.close();
     print('_processCameraImage on close');
+  }
+
+  static Future<DetectedFace?> _detectFace({
+    required InputImage? visionImage,
+    required FaceDetectorMode performanceMode,
+  }) async {
+    if (visionImage == null) return null;
+    final options = FaceDetectorOptions(
+      enableLandmarks: true,
+      enableTracking: true,
+      performanceMode: performanceMode,
+    );
+    final faceDetector = FaceDetector(options: options);
+    try {
+      final List<Face> faces = await faceDetector.processImage(visionImage);
+      final faceDetect = _extractFace(faces);
+      return faceDetect;
+    } catch (error) {
+      debugPrint(error.toString());
+      return null;
+    }
   }
 
   Future<InputImage> loadImageFromAssets(String assetPath) async {
@@ -232,8 +258,52 @@ class FaceDetectionController {
     DeviceOrientation.landscapeRight: 270,
   };
 
+  void updateFace(
+    List<Face> faces,
+    Size imageSize,
+    InputImageRotation rotation,
+    CameraLensDirection cameraLensDirection,
+  ) {
+    facePainter.value = FaceDetectorPainter(
+      faces,
+      imageSize,
+      rotation,
+      cameraLensDirection,
+    );
+  }
+
+  Future<void> _processImage(
+    InputImage inputImage,
+    FaceDetector _faceDetector,
+  ) async {
+    final faces = await _faceDetector.processImage(inputImage);
+    if (inputImage.metadata?.size != null &&
+        inputImage.metadata?.rotation != null) {
+      final painter = FaceDetectorPainter(
+        faces,
+        inputImage.metadata!.size,
+        inputImage.metadata!.rotation,
+        CameraLensDirection.front,
+      );
+      customPainter = CustomPaint(painter: painter);
+    } else {
+      String text = 'Faces found: ${faces.length}\n\n';
+      for (final face in faces) {
+        text += 'face: ${face.boundingBox}\n\n';
+      }
+
+      // TODO: set _customPaint to draw boundingRect on top of image
+      customPainter = null;
+    }
+  }
+
   // Method 1
+  bool _isProcessing = false;
+
   Future<void> processCameraImage(CameraImage image) async {
+    if (_isProcessing) return;
+    _isProcessing = true;
+
     print('_processCameraImage inside');
 
     try {
@@ -244,18 +314,33 @@ class FaceDetectionController {
         cameraController.description,
       );
 
-      // final inputImage1 = await loadImageFromAssets(
-      //   'assets/per_normal_face.jpg',
-      // );
-      final faces = await faceDetector.processImage(inputImage);
+      // final faces = await faceDetector.processImage(inputImage);
 
-      if (faces.isNotEmpty) {
-        final face = faces.first;
+      final _face = await _detectFace(
+        performanceMode: FaceDetectorMode.accurate,
+        visionImage: _inputImageFromCameraImage(
+          image,
+          cameraController,
+          orientations,
+        ),
+      );
+
+      final face = _face?.face ?? null;
+
+      if (face != null) {
+        // final face = faces.first;
         faceRect.value = face.boundingBox;
+
+        updateFace(
+          [face],
+          inputImage.metadata!.size,
+          inputImage.metadata!.rotation,
+          CameraLensDirection.front,
+        );
 
         final _imageFromCameraImage = await convertCameraImageToImage(image);
 
-        final _convertedImage = await _inputImageFromCameraImage(
+        final _convertedImage = _inputImageFromCameraImage(
           image,
           cameraController,
           orientations,
@@ -263,6 +348,23 @@ class FaceDetectionController {
         if (_convertedImage == null) return;
 
         final cropped = await _cropFaceFromCameraImage(image, face.boundingBox);
+
+        //
+        FaceDetector _faceDetector = FaceDetector(
+          options: FaceDetectorOptions(
+            enableContours: true,
+            enableLandmarks: true,
+          ),
+        );
+        _processImage(inputImage, _faceDetector);
+        final painter = FaceDetectorPainter(
+          [face],
+          inputImage.metadata!.size,
+          inputImage.metadata!.rotation,
+          CameraLensDirection.front,
+        );
+        customPaint.value = CustomPaint(painter: painter);
+        //
 
         if (cropped != null) {
           print('_processCameraImage inside');
@@ -292,7 +394,7 @@ class FaceDetectionController {
               _faceHoldTimer = null;
 
               await cameraController.startImageStream((image) {
-                _imageStreamController.add(image);
+                imageStreamController.add(image);
               });
             });
           } else {
@@ -313,6 +415,9 @@ class FaceDetectionController {
       }
     } catch (e) {
       debugPrint('Face detection error: $e');
+      _isProcessing = false;
+    } finally {
+      _isProcessing = false;
     }
   }
 
@@ -538,7 +643,10 @@ class FaceDetectionController {
           y: yp,
           u: up,
           v: vp,
-          format: InputImageFormat.yuv_420_888,
+          format:
+              Platform.isIOS
+                  ? InputImageFormat.bgra8888
+                  : InputImageFormat.nv21,
         );
 
         imgImage.setPixelRgba(x, y, color.red, color.green, color.blue, 255);
@@ -700,7 +808,7 @@ class FaceDetectionController {
 
     final inputImageFormat =
         InputImageFormatValue.fromRawValue(image.format.raw) ??
-        InputImageFormat.yuv_420_888;
+        InputImageFormat.nv21;
 
     /*final metadata = InputImageMetadata(
       size: imageSize,
@@ -817,6 +925,67 @@ class FaceDetectionController {
 
     double acneRatio = acnePixelCount / totalPixels;
     return (acneRatio * 100).clamp(0, 100); // Return percentage estimate
+  }
+
+  //
+  // IMPORTED
+  static _extractFace(List<Face> faces) {
+    //List<Rect> rect = [];
+    bool wellPositioned = faces.isNotEmpty;
+    Face? detectedFace;
+
+    for (Face face in faces) {
+      // rect.add(face.boundingBox);
+      detectedFace = face;
+
+      // Head is rotated to the right rotY degrees
+      if (face.headEulerAngleY! > 5 || face.headEulerAngleY! < -5) {
+        wellPositioned = false;
+      }
+
+      // Head is tilted sideways rotZ degrees
+      if (face.headEulerAngleZ! > 5 || face.headEulerAngleZ! < -5) {
+        wellPositioned = false;
+      }
+
+      // If landmark detection was enabled with FaceDetectorOptions (mouth, ears,
+      // eyes, cheeks, and nose available):
+      final FaceLandmark? leftEar = face.landmarks[FaceLandmarkType.leftEar];
+      final FaceLandmark? rightEar = face.landmarks[FaceLandmarkType.rightEar];
+      final FaceLandmark? bottomMouth =
+          face.landmarks[FaceLandmarkType.bottomMouth];
+      final FaceLandmark? rightMouth =
+          face.landmarks[FaceLandmarkType.rightMouth];
+      final FaceLandmark? leftMouth =
+          face.landmarks[FaceLandmarkType.leftMouth];
+      final FaceLandmark? noseBase = face.landmarks[FaceLandmarkType.noseBase];
+      if (leftEar == null ||
+          rightEar == null ||
+          bottomMouth == null ||
+          rightMouth == null ||
+          leftMouth == null ||
+          noseBase == null) {
+        wellPositioned = false;
+      }
+
+      if (face.leftEyeOpenProbability != null) {
+        if (face.leftEyeOpenProbability! < 0.5) {
+          wellPositioned = false;
+        }
+      }
+
+      if (face.rightEyeOpenProbability != null) {
+        if (face.rightEyeOpenProbability! < 0.5) {
+          wellPositioned = false;
+        }
+      }
+
+      if (wellPositioned) {
+        break;
+      }
+    }
+
+    return DetectedFace(wellPositioned: wellPositioned, face: detectedFace);
   }
 }
 

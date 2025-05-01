@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:camera_face_analysis/face_detection_controller.dart';
@@ -20,13 +21,13 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
   );
   bool _canProcess = true;
   bool _isBusy = false;
-  CustomPaint? _customPaint;
+  final ValueNotifier<CustomPaint?> _customPaint = ValueNotifier(null);
   String? _text;
   var _cameraLensDirection = CameraLensDirection.front;
 
   late FaceDetectionController _faceDetectionController;
   bool _isInitialized = false;
-  late Future<void> _initializationFuture;
+  //late Future<void> _initializationFuture;
 
   @override
   void initState() {
@@ -38,16 +39,25 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
             print('on captured image');
           };
 
+    _initialize();
     //_initializeController();
-    _initializationFuture = _initialize();
+    //_initializationFuture = _initialize();
+    _faceDetectionController.imageStreamController =
+        StreamController<CameraImage>.broadcast();
+
+    _faceDetectionController.imageStreamController.stream.listen(
+      (image) async {
+        await _processCameraImage(image);
+      },
+      onError: (value) {
+        print('this is the on error: $value');
+      },
+      cancelOnError: false,
+    );
   }
 
   Future<void> _initialize() async {
-    // Simulate async setup like camera or MLKit
     await Future.delayed(const Duration(milliseconds: 300));
-    // Or real setup like:
-    // await availableCameras();
-    // _faceDetector = FaceDetector(...);
     await _initializeController();
   }
 
@@ -77,7 +87,8 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
               ? SingleChildScrollView(
                 child: Column(
                   children: [
-                    /*SizedBox(
+                    /*
+                    SizedBox(
                       height: 300,
                       width: MediaQuery.of(context).size.width,
                       child: DetectorView(
@@ -89,7 +100,9 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                         onCameraLensDirectionChanged:
                             (value) => _cameraLensDirection = value,
                       ),
-                    ),*/
+                    ),
+                    */
+
                     /*
                     FutureBuilder<void>(
                       future: _initializationFuture,
@@ -139,6 +152,7 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                         ),
                       ],
                     ),*/
+                    /*
                     CustomFaceDetectionView(
                       cameraController:
                           _faceDetectionController.cameraController,
@@ -147,6 +161,27 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
                         _faceDetectionController.processCameraImage(image);
                         _processCameraImage(image);
                       },
+                      customPaint: _customPaint,
+                      painter: _faceDetectionController.facePainter,
+                    ),
+                    */
+                    Stack(
+                      //fit: StackFit.expand,
+                      children: [
+                        CameraPreview(
+                          _faceDetectionController.cameraController,
+                        ),
+                        ValueListenableBuilder<CustomPainter?>(
+                          valueListenable: _faceDetectionController.facePainter,
+                          builder: (_, painter, __) {
+                            return SizedBox(
+                              height: 400,
+                              width: double.infinity,
+                              child: CustomPaint(painter: painter),
+                            );
+                          },
+                        ),
+                      ],
                     ),
 
                     Padding(
@@ -220,7 +255,10 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
         inputImage.metadata!.rotation,
         _cameraLensDirection,
       );
-      _customPaint = CustomPaint(painter: painter);
+
+      setState(() {
+        _customPaint.value = CustomPaint(painter: painter);
+      });
     } else {
       String text = 'Faces found: ${faces.length}\n\n';
       for (final face in faces) {
@@ -228,7 +266,39 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
       }
       _text = text;
       // TODO: set _customPaint to draw boundingRect on top of image
-      _customPaint = null;
+      _customPaint.value = null;
+    }
+    _isBusy = false;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _processImage(InputImage inputImage) async {
+    if (!_canProcess) return;
+    if (_isBusy) return;
+    _isBusy = true;
+    setState(() {
+      _text = '';
+    });
+    final faces = await _faceDetector.processImage(inputImage);
+    if (inputImage.metadata?.size != null &&
+        inputImage.metadata?.rotation != null) {
+      final painter = FaceDetectorPainter(
+        faces,
+        inputImage.metadata!.size,
+        inputImage.metadata!.rotation,
+        _cameraLensDirection,
+      );
+      _customPaint.value = CustomPaint(painter: painter);
+    } else {
+      String text = 'Faces found: ${faces.length}\n\n';
+      for (final face in faces) {
+        text += 'face: ${face.boundingBox}\n\n';
+      }
+      _text = text;
+      // TODO: set _customPaint to draw boundingRect on top of image
+      _customPaint.value = null;
     }
     _isBusy = false;
     if (mounted) {

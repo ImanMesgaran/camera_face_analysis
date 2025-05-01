@@ -7,13 +7,17 @@ class CustomFaceDetectionView extends StatefulWidget {
   final CameraLensDirection initialDirection;
   final CameraController cameraController;
   // final ValueNotifier<CameraImage> onCameraImage;
+  final CustomPaint? customPaint;
+  final ValueNotifier<CustomPainter?> painter;
 
   CustomFaceDetectionView({
     required this.cameraController,
     required this.onImageAvailable,
     this.initialDirection = CameraLensDirection.front,
     // required this.onCameraImage,
+    required this.customPaint,
     super.key,
+    required this.painter,
   });
 
   @override
@@ -66,6 +70,6 @@ class _CustomFaceDetectionViewState extends State<CustomFaceDetectionView> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return CameraPreview(widget.cameraController);
+    return CameraPreview(widget.cameraController, child: widget.customPaint);
   }
 }
