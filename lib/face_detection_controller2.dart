@@ -558,6 +558,8 @@ class FaceDetectionController {
         converted.height - top,
       );
 
+      print('f');
+
       return img.copyCrop(
         converted,
         x: left,
@@ -610,6 +612,40 @@ class FaceDetectionController {
 
   // Method 2
   Future<img.Image?> _convertCameraImageToImage(CameraImage image) async {
+    final width = image.width;
+    final height = image.height;
+
+    if (Platform.isIOS) {
+      // iOS usually uses BGRA8888 with one plane
+      if (image.planes.length != 1) {
+        print("Unexpected plane count on iOS: ${image.planes.length}");
+        return null;
+      }
+
+      final plane = image.planes[0];
+      final bytes = plane.bytes;
+      final imgImage = img.Image(width: width, height: height);
+
+      int pixelIndex = 0;
+      for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+          final byteIndex = pixelIndex * 4;
+          if (byteIndex + 3 >= bytes.length) break;
+
+          final b = bytes[byteIndex];
+          final g = bytes[byteIndex + 1];
+          final r = bytes[byteIndex + 2];
+          // final a = bytes[byteIndex + 3]; // alpha if needed
+
+          imgImage.setPixelRgba(x, y, r, g, b, 255);
+          pixelIndex++;
+        }
+      }
+
+      return imgImage;
+    }
+
+    // Android (YUV_420_888) path
     if (image.planes.length < 3) {
       print(
         "Unsupported format or corrupted image. Plane count: ${image.planes.length}",
@@ -617,11 +653,8 @@ class FaceDetectionController {
       return null;
     }
 
-    final width = image.width;
-    final height = image.height;
     final uvRowStride = image.planes[1].bytesPerRow;
     final uvPixelStride = image.planes[1].bytesPerPixel ?? 1;
-
     final imgImage = img.Image(width: width, height: height);
 
     for (int y = 0; y < height; y++) {
